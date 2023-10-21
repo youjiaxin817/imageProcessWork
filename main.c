@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #pragma pack(1)
 typedef struct fileHeader
@@ -56,23 +57,27 @@ typedef struct BMP1
     uint8_t * imgData;
     /* data */
 }BMP1;
+
+
+typedef struct BGR
+{
+    uint8_t blue;
+    uint8_t green;
+    uint8_t red;
+}BGR;
 #pragma pack(1)
 //函数声明
 void readBMPInfo(char* fileName);
-void bmp2raw(char * bmpName,char *rawName);
-void colorBmp2raw(char * bmpName,char *rawName);
+void histImg(char* fileName);
+void histImgColor(char* fileName);
+void bgrCopy(BGR* bgr,BGR* bgr1);
+
 int main(void){
-
-    char img_in1[] = "lena.bmp";
-    char img_in2[] = "lena_C.bmp";
-    char img_out1[] = "lena";
-    char img_out2[] = "lena_C";
+    char img_in1[] = "image1.bmp";
+    char img_in2[] = "image_color.bmp";
     readBMPInfo(img_in1);
-    readBMPInfo(img_in2);
-    bmp2raw(img_in1,img_out1);
-    colorBmp2raw(img_in2,img_out2);
-
-
+    // histImage(img_in1,"image12.bmp");
+    histImageColor(img_in2,"image_color2.bmp");
     return 0;
 }
 
@@ -124,182 +129,151 @@ void readBMPInfo(char* fileName){
 
 
 
-void bmp2raw(char * bmpName,char *rawName){
-
-    FILE *src,*dst,*dst_bmp;
-    char name_raw[20] = {};
-    char name_bmp[20] = {};
-
-    strcat(name_raw,rawName);
-    strcat(name_bmp,rawName);
-    char raw_suffix[] = ".raw";
-    char bmp_suffix[] = "s.bmp";
-    strcat(name_raw,raw_suffix);
-    strcat(name_bmp,bmp_suffix);
-
-    src = fopen(bmpName,"rb+");
-    dst = fopen(name_raw,"wb+");
-    dst_bmp = fopen(name_bmp,"wb+");
-
+void histImage(char* fileName,char * output){
+    FILE* src = fopen(fileName,"rb");
+    FILE* dst = fopen(output,"wb+"); 
     BMP srcImg;
-    
     fread(&(srcImg.bitMapFileHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapFileHeaders),src);
     fread(&(srcImg.bitMapInfoHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapInfoHeaders),src);
     fread(srcImg.palettes,sizeof(palette),256,src);
     int width = srcImg.bitMapInfoHeaders.biWidth;
     int height = srcImg.bitMapInfoHeaders.biHeight;
     int pixel_bit = srcImg.bitMapInfoHeaders.biBitCount;
-    int offbit = srcImg.bitMapFileHeaders.bfOffBits;
     int bit_size = height*width;
+    int offbit = srcImg.bitMapFileHeaders.bfOffBits;
+    int pixel_count[256] = {0};
     srcImg.imgData = (uint8_t*)malloc(pixel_bit/8*bit_size);
+    fseek(src,offbit,SEEK_SET);
 
-    if(pixel_bit == 8){
-        printf("8位图像\n");
+    fread(srcImg.imgData,pixel_bit/8,bit_size,src);
+    clock_t start,finish;
+    start = clock();
+    //统计每个像素值的个数，用pixel_count记录
+    uint8_t* p= &(srcImg.imgData[0]);
+    for(int i = 0;i<bit_size;i++){
+        pixel_count[srcImg.imgData[i]]++;
+        p++;
     }
-    else{
-        printf("24位图像\n");
+    //统计每个像素值的概率，用probability记录
+    double probability[256] = {0};
+    for(int i = 0;i<256;i++){
+        probability[i] = (pixel_count[i] * 1.0) / bit_size;
     }
+    //统计每个像素值的累计概率，用sum_probability记录
+    double sum_probability[256]= {0};
+    for(int i = 0;i<256;i++){
+        for(int j = 0;j<=i;j++){
+            sum_probability[i] += probability[j];
+        }
+    }
+    //根据累计比例调整灰度值,新灰度值用new_pixel_count记录
+    uint8_t new_pixel_count[256]={0};
+    for(int i = 0;i<256;i++){
+        new_pixel_count[i] = (int)(sum_probability[i] * 255 + 0.5);//四舍五入
+    }
+
+    //修改原图像中的像素值
+    for(int i = 0;i < bit_size;i++){
+        srcImg.imgData[i] = new_pixel_count[srcImg.imgData[i]];//通过数组下标实现像素值转换
+    }
+    finish = clock();
+    printf("直方图均衡化花费%lf秒\n",(double)(finish-start)/CLOCKS_PER_SEC);
+
+    //将修改后的像素值写到新图片中
+    fwrite(&(srcImg.bitMapFileHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapFileHeaders),dst);
+    fwrite(&(srcImg.bitMapInfoHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapInfoHeaders),dst);
+    fwrite(srcImg.palettes,sizeof(palette),256,dst);
+    fwrite(srcImg.imgData,sizeof(uint8_t),bit_size,dst);
+
+    fclose(dst);
+    fclose(src);
+}
+
+void bgrCopy(BGR* bgr,BGR* bgr1){
+
+    bgr1->blue = bgr->blue;
+    bgr1->green = bgr->green;
+    bgr1->red = bgr->red;
+}
+
+
+void histImageColor(char* fileName,char * output){
+    FILE* src = fopen(fileName,"rb");
+    FILE* dst = fopen(output,"wb+"); 
+    BMP1 srcImg;
+    fread(&(srcImg.bitMapFileHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapFileHeaders),src);
+    fread(&(srcImg.bitMapInfoHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapInfoHeaders),src);
+
+    int width = srcImg.bitMapInfoHeaders.biWidth;
+    int height = srcImg.bitMapInfoHeaders.biHeight;
+    int pixel_bit = srcImg.bitMapInfoHeaders.biBitCount;
+    int bit_size = height*width;
+    int offbit = srcImg.bitMapFileHeaders.bfOffBits;
+    printf("offbit=%d\n",pixel_bit);
+    int pixel_count[3][256] = {0};
+    srcImg.imgData = (uint8_t*)malloc(pixel_bit/8*bit_size);
 
     fseek(src,offbit,SEEK_SET);
 
     fread(srcImg.imgData,pixel_bit/8,bit_size,src);
-
-    uint8_t*data = (uint8_t*)malloc(pixel_bit/8*bit_size);
-
-
-
-    
-    for(int i = 0;i<height;i++){
-        for(int j = 0;j<width;j++){
-            int pos = i * width + j;
-            data[pos] = srcImg.imgData[bit_size - pos -1];
-        }
-    }
+    clock_t start,finish;
+    start = clock();
+    //统计每个像素值的个数，用pixel_count记录
 
 
-//上面操作左右翻转
-    uint8_t*temp_data = (uint8_t*)malloc(pixel_bit/8*bit_size);
-
-    for(int i = 0;i<height;i++){
-        for(int j = 0;j<width;j++){
-            int pos = i * width + j;
-            int srcpos = i*width +(width - j - 1);
-            temp_data[pos] = data[srcpos];
-        }
-    }
-    //左右翻转
-    fwrite(temp_data,1,bit_size,dst);
-    //将数据转成二维数组
-    uint8_t **ptr_arr = (uint8_t **)malloc(sizeof(uint8_t*)*height);
-    for(int i = 0;i<height;i++){
-        
-        ptr_arr[i] = &temp_data[i*width];
-    }
-    uint8_t *quar_data = (uint8_t *)malloc(sizeof(uint8_t)*bit_size*pixel_bit/8/4);
-    for(int i = 0;i<height/2;i++){
-        for(int j = 0;j<width/2;j++){
-            quar_data[i * width/2 + j] = ptr_arr[i][j];
-        }
-    }
-    srcImg.bitMapFileHeaders.BfSize = 54 + bit_size*pixel_bit/8/4;
-    srcImg.bitMapInfoHeaders.biHeight = height/2;
-    srcImg.bitMapInfoHeaders.biWidth = width/2;
-    fwrite(&(srcImg),1,offbit,dst_bmp); 
-    //按bmp顺序写入图像数据
-    for(int i =height/2-1;i>0;i--){
-        fwrite(&quar_data[i*width/2],1,width/2,dst_bmp);
-        
-    }
-}
-
-
-void colorBmp2raw(char * bmpName,char *rawName){
-
-    FILE *src,*dst,*dst_bmp;
-    char name_raw[20] = {};
-    char name_bmp[20] = {};
-
-    strcat(name_raw,rawName);
-    strcat(name_bmp,rawName);
-    char raw_suffix[] = ".raw";
-    char bmp_suffix[] = "s.bmp";
-    strcat(name_raw,raw_suffix);
-    strcat(name_bmp,bmp_suffix);
-
-    src = fopen(bmpName,"rb+");
-    
-
-    //24位没有调色板
-    BMP1 srcImg;
-    
-    fread(&(srcImg.bitMapFileHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapFileHeaders),src);
-    fread(&(srcImg.bitMapInfoHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapInfoHeaders),src);
-    int width = srcImg.bitMapInfoHeaders.biWidth;
-    int height = srcImg.bitMapInfoHeaders.biHeight;
-    int pixel_bit = srcImg.bitMapInfoHeaders.biBitCount;
-    int pixel_byte = pixel_bit/8;
-    int offbit = srcImg.bitMapFileHeaders.bfOffBits;
-    
-    
-
-
-    //考虑对齐
-    int real_width =pixel_byte* (pixel_byte*width%4)?(pixel_byte*width+1):(pixel_byte*width);
-    printf("real_width is %d\n",real_width);
-    long bit_size = height*real_width;
-
-    srcImg.imgData = (uint8_t*)malloc(bit_size);
-    if(pixel_bit == 8){
-        printf("8位图像\n");
-    }
-    else{
-        printf("24位图像\n");
-    }
-
-
-    dst = fopen(name_raw,"wb+");
-    fread(srcImg.imgData,1,bit_size,src);
-    
-    //此时图片上下颠倒，三通道不对
-    uint8_t * temp_data_raw = (uint8_t*)malloc(bit_size);
-    uint8_t * temp_data_bmp = (uint8_t*)malloc(bit_size);
-    for(int i = 0;i < height;i++){
-        for(int j = 0;j<width;j++){
-            int pos = i * real_width + 3 * j;
-            int B = pos;
-            int G = pos +1;
-            int R = pos +2;
-            int srcpos = (height-i-1)*real_width +3*j;
-            int srcR = srcpos;
-            int srcG = srcpos+1;
-            int srcB = srcpos+2;
-            temp_data_raw[R] =  srcImg.imgData[srcR];
-            temp_data_raw[G] =  srcImg.imgData[srcG];
-            temp_data_raw[B] =  srcImg.imgData[srcB];
-
-            temp_data_bmp[B] =  srcImg.imgData[srcR];
-            temp_data_bmp[G] =  srcImg.imgData[srcG];
-            temp_data_bmp[R] =  srcImg.imgData[srcB];
+    for(int i = 0;i<bit_size*3;i+=3){
+        pixel_count[0][srcImg.imgData[i+0]]++;
+        pixel_count[1][srcImg.imgData[i+1]]++;
+        pixel_count[2][srcImg.imgData[i+2]]++;
  
+    }
+    //统计每个像素值的概率，用probability记录
+    double probability[3][256] = {0};
+    for(int i = 0;i<256;i++){
+        probability[0][i] = (pixel_count[0][i] * 1.0) / bit_size;
+        probability[1][i] = (pixel_count[1][i] * 1.0) / bit_size;
+        probability[2][i] = (pixel_count[2][i] * 1.0) / bit_size;
+    }
+    //统计每个像素值的累计概率，用sum_probability记录
+    double sum_probability[3][256]= {0};
+    for(int i = 0;i<256;i++){
+
+
+        if(i !=0){
+            sum_probability[0][i] += sum_probability[0][i-1] + probability[0][i];
+            sum_probability[1][i] += sum_probability[1][i-1] + probability[1][i];
+            sum_probability[2][i] += sum_probability[2][i-1] + probability[2][i];
         }
-    }//经过修整
-
-    fwrite(temp_data_raw,1,bit_size,dst);
-    //以上获得原始图片正常
-    dst_bmp = fopen(name_bmp,"wb+");
-    
-
-    srcImg.bitMapFileHeaders.BfSize = offbit + bit_size/4;
-    srcImg.bitMapInfoHeaders.biHeight = height/2;
-    srcImg.bitMapInfoHeaders.biWidth = width/2;
-    fwrite(&(srcImg.bitMapFileHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapFileHeaders),dst_bmp);
-    fwrite(&(srcImg.bitMapInfoHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapInfoHeaders),dst_bmp);
-    
-    for(int i=height/2;i<height;i++){
-        fwrite(&srcImg.imgData[i*real_width],1,real_width/2,dst_bmp);
+        else{
+            sum_probability[0][i] = probability[0][i];
+            sum_probability[1][i] = probability[1][i];
+            sum_probability[2][i] = probability[2][i];
+        }
+            
+    }
+    //根据累计比例调整灰度值,新灰度值用new_pixel_count记录
+    uint8_t new_pixel_count[3][256]={0};
+    for(int i = 0;i<256;i++){
+        new_pixel_count[0][i] = (int)(sum_probability[0][i] * 255 + 0.5);//四舍五入
+        new_pixel_count[1][i] = (int)(sum_probability[1][i] * 255 + 0.5);//四舍五入
+        new_pixel_count[2][i] = (int)(sum_probability[2][i] * 255 + 0.5);//四舍五入
     }
 
+    //修改原图像中的像素值
+    for(int i = 0;i < bit_size*3;i+=3){
+        srcImg.imgData[i+0] = new_pixel_count[0][srcImg.imgData[i+0]];//通过数组下标实现像素值转换
+        srcImg.imgData[i+1] = new_pixel_count[1][srcImg.imgData[i+1]];
+        srcImg.imgData[i+2] = new_pixel_count[2][srcImg.imgData[i+2]];
+    }
+    finish = clock();
+    printf("直方图均衡化花费%lf秒\n",(double)(finish-start)/CLOCKS_PER_SEC);
 
+    //将修改后的像素值写到新图片中
+    fwrite(&(srcImg.bitMapFileHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapFileHeaders),dst);
+    fwrite(&(srcImg.bitMapInfoHeaders),sizeof(uint8_t),sizeof(srcImg.bitMapInfoHeaders),dst);
 
+    fwrite(srcImg.imgData,sizeof(uint8_t),bit_size*3,dst);
 
+    fclose(dst);
+    fclose(src);
 }
